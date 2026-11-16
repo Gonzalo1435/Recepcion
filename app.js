@@ -2,7 +2,7 @@
 /* Recepción en terreno: registra equipos sin internet y sin cuenta.
    Todo queda en el teléfono (IndexedDB). Al terminar se arma un paquete .zip que el coordinador
    importa en la app principal «Recepción de Equipamiento». */
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -203,7 +203,7 @@ function vRec() {
       ${(r.items || []).map((i, k) => {
         const n = unitsOf(r.id, i.id).length, q = +i.cantidad || 0;
         return `<button class="card" data-a="abrirItem" data-id="${esc(i.id)}"><div class="grow"><div class="t">${k + 1}. ${esc(i.equipo)}</div>
-          <div class="s">${esc([i.marca, i.modelo, i.ref && "REF " + i.ref].filter(Boolean).join(" · "))}</div>
+          <div class="s">${esc([i.codigo && "Cód. " + i.codigo, i.marca, i.modelo, i.ref && "REF " + i.ref].filter(Boolean).join(" · "))}</div>
           ${(i.componentes || []).length ? `<div class="s">${i.componentes.length} accesorios</div>` : ""}</div>
           <span class="count ${q && n === q ? "done" : q && n > q ? "over" : ""}">${n}<small>${q ? " / " + q : ""}</small></span></button>`;
       }).join("") || `<div class="panel empty">Esta recepción no tiene lista de equipos. Usa «Equipo no listado».</div>`}
@@ -223,14 +223,14 @@ function vItem() {
   const us = unitsOf(r.id, it.id), q = +it.cantidad || 0;
   return `${barra(it.equipo, "rec")}
   <main class="wrap stack">
-    <div><h2>${esc(it.equipo)}</h2><div class="muted small">${esc([it.marca, it.modelo, it.ref && "REF " + it.ref, it.recinto].filter(Boolean).join(" · "))}</div>
+    <div><h2>${esc(it.equipo)}</h2><div class="muted small">${esc([it.codigo && "Cód. " + it.codigo, it.marca, it.modelo, it.ref && "REF " + it.ref].filter(Boolean).join(" · "))}</div>${it.area || it.recinto ? `<div class="muted small">Destino: ${esc([it.area, it.recinto].filter(Boolean).join(" · "))}</div>` : ""}
     <div class="small" style="margin-top:4px"><b>${us.length}</b>${q ? ` de ${q}` : ""} unidades registradas</div></div>
     ${(it.componentes || []).length ? `<div class="small muted">Cada unidad debe traer: ${esc(it.componentes.join(", "))}</div>` : ""}
     ${us.map((u, k) => {
       const falt = (u.comps || []).filter(c => !c.ok).length;
       return `<button class="card" data-a="editarUnidad" data-id="${esc(u.id)}">${u.foto ? `<img class="thumb" data-fid="${esc(u.foto)}" alt="">` : `<span class="thumb"></span>`}
         <div class="grow"><div class="t ${u.serie ? "mono" : ""}">${u.serie ? esc(u.serie) : "Sin serie"}</div>
-        <div class="s">${u.equipo ? esc(u.equipo) + " · " : ""}${esc(hora(u.en))}</div>
+        <div class="s">${u.bulto ? "Bulto " + esc(u.bulto) + " · " : ""}${u.equipo ? esc(u.equipo) + " · " : ""}${esc(hora(u.en))}</div>
         <div class="row" style="gap:4px;margin-top:4px">${u.metodo === "codigo" ? `<span class="chip ok">leída del código</span>` : u.serie ? `<span class="chip">escrita</span>` : `<span class="chip warn">sin serie</span>`}
         ${falt ? `<span class="chip warn">faltan ${falt}</span>` : ""}${u.estado && u.estado !== "conforme" ? `<span class="chip ${u.estado === "rechazado" ? "bad" : "warn"}">${ESTADOS[u.estado]}</span>` : ""}</div></div></button>`;
     }).join("") || `<div class="panel empty">Sin unidades todavía.</div>`}
@@ -261,6 +261,7 @@ function vUnidad() {
       ${d.foto ? `<img class="foto" data-fid="${esc(d.foto)}" alt="Foto de la placa">` : ""}
       <label class="btn ${d.foto ? "" : "primary big"}">${d.foto ? "Tomar otra foto" : "Fotografiar placa"}<input type="file" accept="image/*" capture="environment" data-file="placa"></label>
       ${d.leyendo ? `<div class="alert"><span class="spin"></span> Leyendo código…</div>` : ""}
+      <div><label class="f" for="u-bulto">N° de bulto</label><input type="text" id="u-bulto" data-f="bulto" value="${esc(d.bulto ?? "")}" inputmode="numeric" placeholder="Número escrito en el bulto" style="max-width:220px"></div>
       <div><label class="f" for="u-serie">Número de serie ${d.metodo === "codigo" ? `<span class="chip ok">leída del código</span>` : d.serie ? `<span class="chip">escrita</span>` : ""}</label>
         <input type="text" id="u-serie" class="serie" data-f="serie" value="${esc(d.serie)}" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="Escribe la serie si no se leyó"></div>
       ${d.candidatos?.length && !d.serie ? `<div class="small">Otros códigos leídos: ${d.candidatos.map(c => `<button class="btn sm" data-a="usarCand" data-v="${esc(c)}">${esc(c)}</button>`).join(" ")}</div>` : ""}
@@ -304,6 +305,7 @@ function leerForm() {
   const d = S.draft; if (!d || !$("#form")) return;
   const s = $("#u-serie"); if (s) { const v = s.value.trim(); if (normSerie(v) !== normSerie(d.serie)) { d.serie = v; d.metodo = v ? "manual" : "pendiente"; } }
   const e = $("#u-equipo"); if (e) d.equipo = e.value.trim();
+  const bu = $("#u-bulto"); if (bu) { d.bulto = bu.value.trim(); S.ultimoBulto = d.bulto; }
   const o = $("#u-obs"); if (o) d.obs = o.value.trim();
   document.querySelectorAll("[data-chk]").forEach(c => d.checks[c.dataset.chk] = c.checked);
   document.querySelectorAll("[data-ck]").forEach(c => d.comps[+c.dataset.ck].ok = c.checked);
@@ -312,7 +314,7 @@ function leerForm() {
 }
 function nuevaUnidad(iid) {
   const it = iid === "_extra" ? null : itemOf(S.rid, iid);
-  return { id: nid("u"), rid: S.rid, iid, nuevo: true, equipo: "", serie: "", gtin: "", lote: "", fab: "", venc: "", metodo: "pendiente", fuente: "", codigos: [], candidatos: [],
+  return { id: nid("u"), rid: S.rid, iid, nuevo: true, equipo: "", bulto: S.ultimoBulto || "", serie: "", gtin: "", lote: "", fab: "", venc: "", metodo: "pendiente", fuente: "", codigos: [], candidatos: [],
     foto: null, extra: [], comps: (it?.componentes || []).map(n => ({ nombre: n, ok: true })), checks: Object.fromEntries(CHECKS.map(c => [c[0], true])), estado: "conforme", obs: "", por: S.nombre, en: Date.now() };
 }
 async function fotoPlaca(file) {
