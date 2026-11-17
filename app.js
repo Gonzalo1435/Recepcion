@@ -2,7 +2,7 @@
 /* Recepción en terreno: registra equipos sin internet y sin cuenta.
    Todo queda en el teléfono (IndexedDB). Al terminar se arma un paquete .zip que el coordinador
    importa en la app principal «Recepción de Equipamiento». */
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -179,7 +179,7 @@ function vHome() {
       <label class="btn primary">Cargar archivo del plan<input type="file" accept=".json,.txt,application/json,text/plain" data-file="plan"></label>
       <details><summary>Pegar código del plan</summary><div class="stack">
         <div class="small muted">Si te enviaron el plan como texto (empieza con RPLAN), cópialo completo y pégalo aquí.</div>
-        <textarea id="plancod" placeholder="RPLAN1:…"></textarea><button class="btn" data-a="pegarPlan">Cargar código</button></div></details>
+        <textarea id="plancod" placeholder="RPLAN2:…"></textarea><button class="btn" data-a="pegarPlan">Cargar código</button></div></details>
       <details><summary>Recepción sin plan</summary><div class="stack">
         <input type="text" id="nr-nombre" placeholder="Nombre (ej. Stryker camas 17-nov)"><input type="text" id="nr-prov" placeholder="Proveedor">
         <button class="btn" data-a="nuevaRec">Crear</button></div></details>
@@ -361,12 +361,20 @@ async function b64aTexto(b64, comprimido) {
   return await new Response(new Blob([bytes]).stream().pipeThrough(ds)).text();
 }
 async function cargarPlanTexto(txt) {
-  txt = String(txt || "").trim();
-  let obj;
+  txt = String(txt || "").replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "").trim();
+  let obj, err = "";
+  const m = txt.match(/RPLAN\s*([012])\s*:\s*([A-Za-z0-9+/=\s]+)/);
   try {
-    const m = txt.match(/RPLAN([01]):([A-Za-z0-9+/=\s]+)/);
-    obj = JSON.parse(m ? await b64aTexto(m[2], m[1] === "1") : txt);
-  } catch { toast("El archivo o código del plan no es válido."); return; }
+    if (m) {
+      const v = m[1], b64 = m[2].replace(/\s+/g, "");
+      if (b64.length % 4) err = "El código llegó incompleto: cópialo de nuevo completo (desde RPLAN hasta el final).";
+      else if (v === "2") { const z = await JSZip.loadAsync(b64, { base64: true }); const f = z.file("plan.json") || Object.values(z.files)[0]; obj = JSON.parse(await f.async("string")); }
+      else if (v === "1") { if (typeof DecompressionStream === "undefined") err = "Este teléfono no puede leer ese código. Pide al coordinador que lo genere de nuevo (botón «Enviar plan a terreno»)."; else obj = JSON.parse(await b64aTexto(b64, true)); }
+      else obj = JSON.parse(await b64aTexto(b64, false));
+    } else if (/^\s*\{/.test(txt)) obj = JSON.parse(txt);
+    else err = "No encontré un código de plan. Debe empezar con RPLAN.";
+  } catch (e) { console.warn(e); err = err || "El código está incompleto o dañado. Cópialo de nuevo completo, o pide el archivo del plan."; }
+  if (err || !obj) { toast(err || "El archivo o código del plan no es válido.", 6000); return; }
   if (obj.formato !== "recepcion-plan" || !obj.rec) { toast("Esto no es un plan de recepción."); return; }
   const prev = getRec(obj.rec.id);
   const rec = { ...(prev || {}), ...obj.rec, items: obj.items || [], origen: "plan", creado: prev?.creado || Date.now(), planCargado: Date.now() };
